@@ -56,6 +56,10 @@ object CocoonImport {
         // JSON?
         val text = String(bytes, Charsets.UTF_8).trim()
         if (text.startsWith("{") || text.startsWith("[")) {
+            // Dotplay's own history format (e.g. read from Cocoon's Log pod): items are passed through as-is
+            if (text.startsWith("{")) runCatching { JSONObject(text) }.getOrNull()?.let { o ->
+                if (o.optString("dotplay") == "cocoon-history") return parseDotplayHistory(o, name)
+            }
             return runCatching {
                 val root: Any = if (text.startsWith("{")) JSONObject(text) else JSONArray(text)
                 val items = parseJsonTree(root)
@@ -63,6 +67,33 @@ object CocoonImport {
             }.getOrElse { Result(emptyList(), "Invalid JSON in $name") }
         }
         return Result(emptyList(), "Unknown file type: $name")
+    }
+
+    // ---------- Dotplay history file ----------
+
+    /** {"dotplay":"cocoon-history","items":[{title, platformType, platform, source, totalMinutes, lastPlayed, days:[{day, minutes}]}]} */
+    private fun parseDotplayHistory(o: JSONObject, name: String): Result {
+        val arr = o.optJSONArray("items") ?: return Result(emptyList(), "No items in $name")
+        val items = (0 until arr.length()).mapNotNull { i ->
+            val it = arr.optJSONObject(i) ?: return@mapNotNull null
+            val title = it.optString("title").takeIf { t -> t.isNotBlank() } ?: return@mapNotNull null
+            val days = HashMap<String, Int>()
+            it.optJSONArray("days")?.let { d ->
+                for (j in 0 until d.length()) d.optJSONObject(j)?.let { x -> days[x.optString("day")] = x.optInt("minutes") }
+            }
+            PlayItem(
+                title = title,
+                platformType = it.optString("platformType", "emulated"),
+                platform = it.optString("platform", "Emulated"),
+                source = it.optString("source", "cocoon"),
+                days = days.filterKeys { k -> k.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) },
+                totalMinutes = if (it.has("totalMinutes")) it.optInt("totalMinutes") else null,
+                lastPlayed = it.optString("lastPlayed").takeIf { s -> s.isNotBlank() }?.let { s ->
+                    runCatching { java.time.Instant.parse(s).toEpochMilli() }.getOrNull()
+                },
+            )
+        }
+        return Result(items.sortedByDescending { it.totalMinutes ?: 0 }, "Read $name (Dotplay history)")
     }
 
     // ---------- JSON ----------

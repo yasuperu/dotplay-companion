@@ -26,8 +26,12 @@ object CocoonLog {
     private val ROM = Regex("""ROMs%2F([^%/]+)%2F""", RegexOption.IGNORE_CASE)
     private val PLAYER = Regex("""Player: .*\(([a-zA-Z0-9_.]+)/""")
 
-    /** Max gap between Cocoon launching a game and the emulator time we credit to it. */
-    private const val MAX_SESSION_MS = 12L * 3600_000
+    /**
+     * Max gap between Cocoon launching a game and emulator time we still credit to it.
+     * Emulators stay open in the background and are often resumed days later from Recents
+     * without a new launch in Cocoon, so this is generous.
+     */
+    private const val MAX_SESSION_MS = 21L * 24 * 3600_000
 
     fun parse(text: String): List<Launch> {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
@@ -78,8 +82,9 @@ object CocoonLog {
             if (minutes.isEmpty()) null
             else PlayItem(
                 title = key.first,
-                platformType = if (key.second == "GameNative") "pc" else "emulated",
-                platform = key.second,
+                // GameNative runs your Steam games on Android: count it on the game's Steam entry
+                platformType = if (key.second == "GameNative") "steam" else "emulated",
+                platform = if (key.second == "GameNative") "Steam" else key.second,
                 source = "cocoon",
                 days = minutes,
                 lastPlayed = last[key],
