@@ -148,10 +148,10 @@ object CocoonLog {
     }
 
     /** Everything needed for one sync: parse the log, read usage, attribute. */
-    fun collect(ctx: Context, prefs: Prefs, days: Int = 7): List<PlayItem> {
+    fun collect(ctx: Context, prefs: Prefs, days: Int = 7, skipPackages: Set<String> = emptySet()): List<PlayItem> {
         val tree = prefs.cocoonTree ?: return emptyList()
         val text = readLog(ctx, Uri.parse(tree)) ?: return emptyList()
-        val launches = parse(text)
+        val launches = parse(text).filter { it.pkg !in skipPackages }   // mapped apps are counted by their mapping
         if (launches.isEmpty()) return emptyList()
         val spans = UsageTracker.spans(ctx, launches.map { it.pkg }.toSet(), days)
         return attribute(launches, spans)

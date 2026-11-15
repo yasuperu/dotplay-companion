@@ -177,14 +177,25 @@ object UsageTracker {
         return out
     }
 
-    /** Minutes per day for each tracked Android game. */
-    fun collect(ctx: Context, packages: Set<String>, days: Int = 7): List<PlayItem> =
-        spans(ctx, packages, days).mapNotNull { (pkg, list) ->
+    /**
+     * Minutes per day for each tracked Android app. Apps with an active [GameMapping] are reported as that game
+     * (with [mappedSource], so it lines up with Cocoon history for the same game); other apps as themselves.
+     */
+    fun collect(
+        ctx: Context,
+        packages: Set<String>,
+        days: Int = 7,
+        mappings: Map<String, GameMapping> = emptyMap(),
+        mappedSource: String = "android",
+    ): List<PlayItem> =
+        spans(ctx, packages + mappings.keys, days).mapNotNull { (pkg, list) ->
             val byDay = HashMap<String, Long>()
             list.forEach { addSpan(byDay, it.start, it.end) }
             val minutes = byDay.mapValues { (it.value / 60000).toInt() }.filterValues { it > 0 }
             if (minutes.isEmpty()) null
-            else PlayItem(label(ctx, pkg), "mobile", "Android", "android", minutes, lastPlayed = list.maxOf { it.end })
+            else mappings[pkg]?.let { m ->
+                PlayItem(m.title, m.platformType, m.platform, mappedSource, minutes, lastPlayed = list.maxOf { it.end })
+            } ?: PlayItem(label(ctx, pkg), "mobile", "Android", "android", minutes, lastPlayed = list.maxOf { it.end })
         }
 
     /** Split a session across midnight boundaries. */

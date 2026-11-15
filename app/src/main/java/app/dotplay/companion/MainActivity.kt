@@ -146,6 +146,18 @@ class MainActivity : Activity() {
         card3.addView(ui.button("Choose Android games to track", ghost = true) { chooseApps() })
         card3.addView(ui.button("Sync now", accent = true) { syncNow() })
 
+        // --- apps that are really a game (emulators Cocoon can't read, recomps, ports) ---
+        val card4 = ui.card(root)
+        card4.addView(ui.label("Apps as games"))
+        card4.addView(ui.text(
+            "For apps Cocoon can't identify: a Switch 2 emulator running one game, PC recomps like " +
+                "Ship of Harkinian, Android ports. Their time counts as the game you choose. Switch a mapping off " +
+                "to stop it without deleting it.", 14f, Ui.DIM))
+        mappingList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        card4.addView(mappingList)
+        card4.addView(ui.button("Add app as game", ghost = true) { pickAppForMapping() })
+        refreshMappings()
+
         ui.space(root, 12)
         log = ui.text("", 13f, Ui.DIM)
         root.addView(log)
@@ -157,6 +169,79 @@ class MainActivity : Activity() {
         status.text = "Usage access: $perm\nAndroid games tracked: ${prefs.trackedApps.size}\nLast sync: ${prefs.lastSync}\nAuto sync: every hour and when you open this app" +
             if (!prefs.configured) "\n\nSet the server URL and device key first." else ""
         cocoonStatus.text = if (prefs.cocoonTree != null) "Cocoon folder: connected" else "Cocoon folder: not chosen"
+    }
+
+    // ---------- app -> game mappings ----------
+
+    private lateinit var mappingList: LinearLayout
+
+    private fun refreshMappings() {
+        mappingList.removeAllViews()
+        val all = GameMappings.all(this)
+        if (all.isEmpty()) { mappingList.addView(ui.text("No mappings yet.", 14f, Ui.DIM)); return }
+        all.forEach { m ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, ui.dp(6), 0, ui.dp(6))
+                setOnClickListener { editMapping(m.pkg, m.appLabel, m) }
+            }
+            val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            texts.addView(ui.text(m.title, 15f, if (m.enabled) Ui.TEXT else Ui.DIM, bold = true))
+            texts.addView(ui.text("${m.appLabel} → ${m.platform.ifBlank { m.platformType }}", 13f, Ui.DIM))
+            row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(android.widget.Switch(this).apply {
+                isChecked = m.enabled
+                setOnCheckedChangeListener { _, on -> GameMappings.put(this@MainActivity, m.copy(enabled = on)); refreshMappings() }
+            })
+            mappingList.addView(row)
+        }
+    }
+
+    private fun pickAppForMapping() {
+        io.execute {
+            val apps = UsageTracker.launchableApps(this)
+            runOnUiThread {
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle("Which app is really a game?")
+                    .setItems(apps.map { it.label }.toTypedArray()) { _, i -> editMapping(apps[i].pkg, apps[i].label, null) }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+    }
+
+    private val TYPES = listOf("emulated" to "Emulated", "pc" to "PC / recomp", "console" to "Console", "mobile" to "Android", "steam" to "Steam")
+
+    private fun editMapping(pkg: String, appLabel: String, existing: GameMapping?) {
+        val guess = existing?.let { Triple(it.title, it.platformType, it.platform) } ?: GameMappings.suggest(appLabel)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0) }
+        box.addView(ui.label("Game (official name)"))
+        val title = ui.input(guess?.first ?: "", "e.g. Pokémon Pokopia")
+        box.addView(title)
+        box.addView(ui.label("Platform type"))
+        val type = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, TYPES.map { it.second })
+            setSelection(TYPES.indexOfFirst { it.first == (guess?.second ?: "emulated") }.coerceAtLeast(0))
+        }
+        box.addView(type)
+        box.addView(ui.label("System"))
+        val platform = ui.input(guess?.third ?: "", "e.g. Switch 2, N64, PC")
+        box.addView(platform)
+        val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle(appLabel)
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val t = title.text.toString().trim()
+                if (t.isEmpty()) { say("A game name is needed"); return@setPositiveButton }
+                GameMappings.put(this, GameMapping(pkg, appLabel, t, TYPES[type.selectedItemPosition].first,
+                    platform.text.toString().trim(), existing?.enabled ?: true))
+                refreshMappings()
+                say("$appLabel now counts as $t")
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dlg.setNeutralButton("Delete") { _, _ -> GameMappings.remove(this, pkg); refreshMappings() }
+        dlg.show()
     }
 
     private fun chooseApps() {

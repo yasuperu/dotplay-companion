@@ -37,8 +37,11 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
     companion object {
         /** Cocoon games (emulator time credited to the launched game) + tracked Android games. */
         fun collectAll(ctx: Context, prefs: Prefs): List<PlayItem> {
-            val cocoon = runCatching { CocoonLog.collect(ctx, prefs) }.getOrDefault(emptyList())
-            val android = UsageTracker.collect(ctx, prefs.trackedApps)
+            val mappings = GameMappings.active(ctx)
+            val cocoon = runCatching { CocoonLog.collect(ctx, prefs, skipPackages = mappings.keys) }.getOrDefault(emptyList())
+            // On a Cocoon device, mapped apps use the "cocoon" source so they merge with imported Cocoon history
+            val source = if (prefs.cocoonTree != null) "cocoon" else "android"
+            val android = UsageTracker.collect(ctx, prefs.trackedApps, mappings = mappings, mappedSource = source)
             return cocoon + android
         }
 
