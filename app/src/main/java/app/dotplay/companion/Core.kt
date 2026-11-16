@@ -23,7 +23,7 @@ class Prefs(ctx: Context) {
     private val p = ctx.getSharedPreferences("dotplay", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = p.getString("server", "") ?: ""
+        get() = (p.getString("server", "") ?: "").ifBlank { DEFAULT_SERVER }
         set(v) = p.edit().putString("server", v.trim().trimEnd('/')).apply()
 
     var deviceKey: String
@@ -47,8 +47,22 @@ class Prefs(ctx: Context) {
         get() = p.getString("cocoonTree", null)
         set(v) = p.edit().putString("cocoonTree", v).apply()
 
+    /** @username this device is linked to (shown in the app) */
+    var linkedUser: String?
+        get() = p.getString("linkedUser", null)
+        set(v) = p.edit().putString("linkedUser", v).apply()
+
+    /** setup wizard finished (or skipped) */
+    var setupDone: Boolean
+        get() = p.getBoolean("setupDone", false)
+        set(v) = p.edit().putBoolean("setupDone", v).apply()
+
+    fun unlink() = p.edit().remove("key").remove("linkedUser").putBoolean("setupDone", false).apply()
+
     val configured get() = serverUrl.isNotBlank() && deviceKey.isNotBlank()
 }
+
+const val DEFAULT_SERVER = "https://dotplayapp.com/api"
 
 /** One game with playtime ready to send to the server. */
 data class PlayItem(
@@ -80,6 +94,48 @@ fun isoUtc(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(millis))
 
 object Api {
+    private fun request(method: String, url: String, body: String? = null, key: String? = null): Pair<Int, String> {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.requestMethod = method
+        conn.connectTimeout = 15000
+        conn.readTimeout = 20000
+        conn.setRequestProperty("Accept", "application/json")
+        if (key != null) conn.setRequestProperty("Authorization", "Bearer $key")
+        if (body != null) {
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toByteArray()) }
+        }
+        val code = conn.responseCode
+        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText() ?: ""
+        conn.disconnect()
+        return code to text
+    }
+
+    private fun json(code: Int, text: String): JSONObject {
+        val o = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+        if (code !in 200..299) throw RuntimeException(o.optString("error").ifBlank { "HTTP $code" })
+        return o
+    }
+
+    data class PairStart(val pairId: String, val code: String, val linkUrl: String, val expiresIn: Int)
+    data class PairResult(val status: String, val key: String?, val username: String?, val serverUrl: String?)
+
+    /** Ask the server for a link code (no account needed). */
+    fun pairStart(server: String, device: String): PairStart {
+        val (c, t) = request("POST", "$server/pair/start", JSONObject().put("device", device).toString())
+        val o = json(c, t)
+        return PairStart(o.getString("pairId"), o.getString("code"), o.getString("linkUrl"), o.optInt("expiresIn", 600))
+    }
+
+    /** pending | approved (with key) | expired */
+    fun pairStatus(server: String, pairId: String): PairResult {
+        val (c, t) = request("GET", "$server/pair/status?pairId=$pairId")
+        val o = json(c, t)
+        return PairResult(o.optString("status"), o.optString("key").ifBlank { null }, o.optString("username").ifBlank { null },
+            o.optString("serverUrl").ifBlank { null })
+    }
+
     /** POST items to /companion/sync. Returns a short status message. Throws on failure. */
     fun sync(prefs: Prefs, device: String, items: List<PlayItem>): String {
         if (!prefs.configured) throw IllegalStateException("Set the server URL and device key first")
