@@ -52,6 +52,16 @@ class Prefs(ctx: Context) {
         get() = p.getString("linkedUser", null)
         set(v) = p.edit().putString("linkedUser", v).apply()
 
+    /** background sync interval in minutes; 0 = only when the app is opened. Default every 3 hours. */
+    var syncEveryMinutes: Int
+        get() = p.getInt("syncEvery", 180)
+        set(v) = p.edit().putInt("syncEvery", v).apply()
+
+    /** fingerprint of the last data sent, so an unchanged sync costs no network traffic */
+    var lastSentHash: String
+        get() = p.getString("lastSentHash", "") ?: ""
+        set(v) = p.edit().putString("lastSentHash", v).apply()
+
     /** setup wizard finished (or skipped) */
     var setupDone: Boolean
         get() = p.getBoolean("setupDone", false)

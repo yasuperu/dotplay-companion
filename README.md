@@ -24,7 +24,15 @@ Open the app and follow the steps:
 3. **Cocoon folder.** Pick the `Cocoon` folder on internal storage. The app reads which game Cocoon started and counts
    the time the emulator was on screen.
 4. **Extras (optional).** Android games to track, and apps that count as a specific game.
-5. **Done.** The app syncs every hour and whenever you open it.
+5. **Done.** The app syncs in the background (every 3 hours by default) and whenever you open it.
+
+## Battery
+
+Background sync is light: Android wakes the app for a few seconds to read the screen-time list it keeps anyway, and
+batches that with other apps' background work. It only runs with a network connection and not when the battery is low,
+and when nothing changed since the last sync, nothing is sent at all. Choose *Every hour*, *Every 3 hours* (default),
+*Twice a day* or *Only when I open the app* under **Home → Background sync**. Android keeps detailed usage for about a
+week, so even "only when I open the app" loses nothing as long as you open it once a week.
 
 On dual-screen handhelds (AYN Thor) the second screen shows your week while the app is open.
 

@@ -15,8 +15,6 @@ import android.view.Display
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.text.DateFormat
-import java.util.Date
 import java.util.concurrent.Executors
 
 /**
@@ -58,12 +56,21 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
             android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(22), ui.dp(30), ui.dp(22), ui.dp(48))
-        }
-        scroll = ScrollView(this).apply { background = ui.wallpaper(); addView(root) }
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll = ScrollView(this).apply { background = ui.wallpaper(); addView(root); clipToPadding = false }
         setContentView(scroll)
+        // Android 15 draws apps behind the status and navigation bars: keep the content clear of them,
+        // and keep it a readable width on wide screens (the Thor's top screen in landscape).
+        scroll.setOnApplyWindowInsetsListener { _, insets ->
+            val (top, bottom, left, right) = if (Build.VERSION.SDK_INT >= 30) {
+                val b = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                listOf(b.top, b.bottom, b.left, b.right)
+            } else @Suppress("DEPRECATION") listOf(insets.systemWindowInsetTop, insets.systemWindowInsetBottom, insets.systemWindowInsetLeft, insets.systemWindowInsetRight)
+            val width = resources.displayMetrics.widthPixels - left - right
+            val side = maxOf(ui.dp(22), (width - ui.dp(680)) / 2)
+            root.setPadding(left + side, top + ui.dp(20), right + side, bottom + ui.dp(40))
+            insets
+        }
         show(if (prefs.setupDone && prefs.configured) Screen.HOME else if (prefs.configured) Screen.USAGE else Screen.WELCOME)
         SyncWorker.schedule(this)
         handleShare(intent)
@@ -206,7 +213,8 @@ class MainActivity : Activity() {
         c.addView(ui.check(UsageTracker.hasPermission(this), "Usage access"))
         c.addView(ui.check(prefs.cocoonTree != null, "Cocoon folder"))
         c.addView(ui.check(prefs.trackedApps.isNotEmpty() || GameMappings.all(this).isNotEmpty(), "Extra games"))
-        c.addView(ui.text("Dotplay syncs every hour and whenever you open this app.", 14f, Ui.DIM))
+        c.addView(ui.text("Syncs ${SyncWorker.intervalLabel(prefs.syncEveryMinutes).lowercase()} in the background (light on battery: " +
+            "only with network, not when the battery is low, and nothing is sent when nothing changed), and whenever you open this app.", 14f, Ui.DIM))
         root.addView(ui.button("Sync now and finish", accent = true) {
             prefs.setupDone = true
             show(Screen.HOME)
@@ -220,8 +228,9 @@ class MainActivity : Activity() {
         s.addView(ui.check(prefs.configured, if (prefs.configured) "Linked to @${prefs.linkedUser ?: "your account"}" else "Not linked"))
         s.addView(ui.check(UsageTracker.hasPermission(this), "Usage access"))
         s.addView(ui.check(prefs.cocoonTree != null, "Cocoon folder"))
-        s.addView(ui.text("Last sync: ${prefs.lastSync} · syncs every hour and when you open the app", 13f, Ui.DIM))
+        s.addView(ui.text("Last sync: ${prefs.lastSync}", 13f, Ui.DIM))
         s.addView(ui.button("Sync now", accent = true) { syncNow() })
+        s.addView(ui.button("Background sync: ${SyncWorker.intervalLabel(prefs.syncEveryMinutes)}", ghost = true) { chooseInterval() })
         s.addView(ui.button("Open my profile", ghost = true) {
             open(prefs.serverUrl.removeSuffix("/api") + (prefs.linkedUser?.let { "/u/$it" } ?: ""))
         })
@@ -418,16 +427,29 @@ class MainActivity : Activity() {
 
     // ---------- sync & Cocoon ----------
 
+    private fun chooseInterval() {
+        val opts = SyncWorker.INTERVALS
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle("Background sync")
+            .setSingleChoiceItems(opts.map { it.second }.toTypedArray(), opts.indexOfFirst { it.first == prefs.syncEveryMinutes }) { d, i ->
+                prefs.syncEveryMinutes = opts[i].first
+                SyncWorker.schedule(this)
+                d.dismiss()
+                show(screen)
+                say(if (opts[i].first == 0) "Background sync is off. The app syncs when you open it." else "Background sync: ${opts[i].second}")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun syncNow() {
         say("Syncing…")
         io.execute {
             try {
-                val items = SyncWorker.collectAll(this, prefs)
-                val msg = if (items.isEmpty()) "Nothing new to send" else Api.sync(prefs, deviceName(), items)
-                prefs.lastSync = DateFormat.getDateTimeInstance().format(Date())
+                val msg = SyncWorker.sendIfChanged(this, prefs, force = true)
                 runOnUiThread {
                     if (screen == Screen.HOME) show(Screen.HOME)
-                    say(msg + items.joinToString("") { "\n· ${it.title} [${it.platform}]: ${it.days.values.sum()} min" })
+                    say(msg)
                     refreshDashboard()
                 }
             } catch (e: Exception) {
