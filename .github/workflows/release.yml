@@ -1,0 +1,61 @@
+name: Release APK
+
+# Push a tag like `v0.4.0` to build a signed APK and publish it as a GitHub release (Obtainium picks it up).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Decode signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret: the APK is debug-signed and can't update an installed release."
+          fi
+
+      - name: Build APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # +100: builds from the old monorepo used version codes 1–3; Android only installs higher codes
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          export VERSION_CODE=$((VERSION_CODE + 100))
+          [ "$GITHUB_REF_TYPE" = "tag" ] && export VERSION_NAME="${GITHUB_REF_NAME#v}" || export VERSION_NAME="0.0.$VERSION_CODE"
+          gradle --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "dotplay-companion-$VERSION_NAME.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotplay-companion
+          path: dotplay-companion-*.apk
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Dotplay Companion ${{ github.ref_name }}
+          files: dotplay-companion-*.apk
