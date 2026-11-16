@@ -61,19 +61,31 @@ class MainActivity : Activity() {
         setContentView(scroll)
         // Android 15 draws apps behind the status and navigation bars: keep the content clear of them,
         // and keep it a readable width on wide screens (the Thor's top screen in landscape).
+        // Not every device hands out insets (the Thor doesn't when the app isn't drawn behind the bars), so the
+        // side margin is also set from the view's own width, and again whenever that width changes.
         scroll.setOnApplyWindowInsetsListener { _, insets ->
-            val (top, bottom, left, right) = if (Build.VERSION.SDK_INT >= 30) {
+            bars = if (Build.VERSION.SDK_INT >= 30) {
                 val b = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
-                listOf(b.top, b.bottom, b.left, b.right)
-            } else @Suppress("DEPRECATION") listOf(insets.systemWindowInsetTop, insets.systemWindowInsetBottom, insets.systemWindowInsetLeft, insets.systemWindowInsetRight)
-            val width = resources.displayMetrics.widthPixels - left - right
-            val side = maxOf(ui.dp(22), (width - ui.dp(680)) / 2)
-            root.setPadding(left + side, top + ui.dp(20), right + side, bottom + ui.dp(40))
+                intArrayOf(b.left, b.top, b.right, b.bottom)
+            } else @Suppress("DEPRECATION") intArrayOf(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            applyPadding()
             insets
         }
+        scroll.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) scroll.post { applyPadding() } }
+        applyPadding()
         show(if (prefs.setupDone && prefs.configured) Screen.HOME else if (prefs.configured) Screen.USAGE else Screen.WELCOME)
         SyncWorker.schedule(this)
         handleShare(intent)
+    }
+
+    private var bars = intArrayOf(0, 0, 0, 0)   // left, top, right, bottom system bars
+
+    /** Comfortable side margins, and a readable column on wide screens (the Thor's top screen in landscape). */
+    private fun applyPadding() {
+        val (left, top, right, bottom) = bars.toList()
+        val width = (if (scroll.width > 0) scroll.width else resources.displayMetrics.widthPixels) - left - right
+        val side = maxOf(ui.dp(24), (width - ui.dp(680)) / 2)
+        root.setPadding(left + side, top + ui.dp(20), right + side, bottom + ui.dp(40))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -104,6 +116,7 @@ class MainActivity : Activity() {
     private fun show(s: Screen) {
         if (s != Screen.LINK) main.removeCallbacks(poll)
         screen = s
+        refreshDashboard()
         root.removeAllViews()
         root.addView(ui.logo(30))
         ui.space(root, 18)
@@ -314,7 +327,6 @@ class MainActivity : Activity() {
     // ---------- second screen ----------
 
     private fun showDashboard() {
-        if (!prefs.setupDone) return
         val dm = getSystemService(DISPLAY_SERVICE) as DisplayManager
         val second: Display = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull() ?: return
         if (dashboard?.display?.displayId != second.displayId) {
@@ -326,6 +338,8 @@ class MainActivity : Activity() {
 
     private fun refreshDashboard() {
         if (dashboard == null) return
+        // during setup the second screen keeps you company with the steps, instead of staying on another app
+        if (!prefs.setupDone) { dashboard?.renderSetup(screen.ordinal); return }
         io.execute {
             val items = runCatching { SyncWorker.collectAll(this, prefs) }.getOrDefault(emptyList())
             runOnUiThread { dashboard?.render(items, prefs.lastSync) }

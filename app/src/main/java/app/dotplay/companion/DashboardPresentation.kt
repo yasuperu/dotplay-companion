@@ -26,9 +26,33 @@ class DashboardPresentation(ctx: Context, display: Display) : Presentation(ctx, 
         render(emptyList(), "never")
     }
 
+    /** While setting up: the logo and where you are in the steps (they happen on the top screen). */
+    fun renderSetup(step: Int) {
+        if (!::root.isInitialized) return
+        root.removeAllViews()
+        root.gravity = android.view.Gravity.CENTER_HORIZONTAL
+        ui.space(root, 8)
+        root.addView(ui.text("Dotplay", 40f, bold = true).apply { gravity = android.view.Gravity.CENTER })
+        root.addView(ui.text("Companion", 18f, Ui.DIM).apply { gravity = android.view.Gravity.CENTER })
+        ui.space(root, 14)
+        val card = ui.card(root)
+        card.addView(ui.text("Setting up on the top screen", 18f, bold = true))
+        ui.space(card, 8)
+        val steps = listOf("Link your Dotplay account", "Allow usage access", "Choose the Cocoon folder", "Pick extra games", "First sync")
+        steps.forEachIndexed { i, s ->
+            val done = i + 1 < step
+            val now = i + 1 == step
+            card.addView(ui.text("${if (done) "✓" else "${i + 1}."}  $s", 16f, if (now) Ui.ACCENT else if (done) Ui.TEXT else Ui.DIM, bold = now))
+            ui.space(card, 6)
+        }
+        ui.space(root, 14)
+        root.addView(ui.text("When you're done, this screen shows your week.", 14f, Ui.DIM).apply { gravity = android.view.Gravity.CENTER })
+    }
+
     fun render(items: List<PlayItem>, lastSync: String) {
         if (!::root.isInitialized) return
         root.removeAllViews()
+        root.gravity = android.view.Gravity.START
         val total = items.sumOf { it.days.values.sum() }
         root.addView(ui.label("● This week on this device", Ui.ACCENT))
 
