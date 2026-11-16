@@ -50,6 +50,12 @@ On dual-screen handhelds (AYN Thor) the second screen shows your week while the 
 The app only sends game titles, systems and minutes per day to your Dotplay account, over HTTPS.
 See the [Dotplay privacy statement](https://dotplayapp.com/privacy).
 
+## Support
+
+Dotplay and this app are a free passion project, without ads or paid features. If you enjoy them, you can
+[buy me a coffee on Ko-fi](https://ko-fi.com/yasuperu): it helps keep the domain and hosting going. Entirely optional;
+using it and telling others about it means just as much.
+
 ## Build it yourself
 
 ```bash
