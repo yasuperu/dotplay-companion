@@ -222,9 +222,14 @@ object UsageTracker {
         val events = usm.queryEvents(start, end)
         val ev = UsageEvents.Event()
         val openSince = HashMap<String, Long>()
+        // Which activities of each app are on screen. An app is "open" while any of them is. Apps that start through a
+        // trampoline (PokeDaisy: LaunchActivity -> PokeDaisyActivity) report the trampoline's STOPPED *after* the game
+        // activity resumed, so closing the app on any pause/stop would cut the whole session to zero.
+        val resumed = HashMap<String, MutableSet<String>>()
         val out = HashMap<String, MutableList<Span>>()
 
         fun close(pkg: String, at: Long) {
+            resumed.remove(pkg)
             val s = openSince.remove(pkg) ?: return
             if (at > s) out.getOrPut(pkg) { mutableListOf() } += Span(s, at)
         }
@@ -232,9 +237,19 @@ object UsageTracker {
         while (events.hasNextEvent()) {
             events.getNextEvent(ev)
             val pkg = ev.packageName
+            if (pkg !in packages && ev.eventType != UsageEvents.Event.SCREEN_NON_INTERACTIVE &&
+                ev.eventType != UsageEvents.Event.DEVICE_SHUTDOWN) continue
+            val activity = ev.className ?: ""
             when (ev.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED -> if (pkg in packages && pkg !in openSince) openSince[pkg] = ev.timeStamp
-                UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED -> if (pkg in packages) close(pkg, ev.timeStamp)
+                UsageEvents.Event.ACTIVITY_RESUMED -> {
+                    resumed.getOrPut(pkg) { HashSet() } += activity
+                    if (pkg !in openSince) openSince[pkg] = ev.timeStamp
+                }
+                UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED -> {
+                    val set = resumed[pkg]
+                    set?.remove(activity)
+                    if (set.isNullOrEmpty()) close(pkg, ev.timeStamp)
+                }
                 UsageEvents.Event.SCREEN_NON_INTERACTIVE, UsageEvents.Event.DEVICE_SHUTDOWN ->
                     openSince.keys.toList().forEach { close(it, ev.timeStamp) }
             }

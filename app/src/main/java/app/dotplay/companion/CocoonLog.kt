@@ -22,7 +22,8 @@ object CocoonLog {
     data class Launch(val at: Long, val title: String, val system: String, val pkg: String)
 
     private val TS = Regex("""^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+]""")
-    private val LAUNCH = Regex("""Launch: (.+?) ═+\s*$""")
+    // "Launch:" starts a game; "Swap:" switches the game inside an emulator that is already running
+    private val LAUNCH = Regex("""(?:Launch|Swap): (.+?) ═+\s*$""")
     private val ROM = Regex("""ROMs%2F([^%/]+)%2F""", RegexOption.IGNORE_CASE)
     private val PLAYER = Regex("""Player: .*\(([a-zA-Z0-9_.]+)/""")
 
@@ -68,13 +69,19 @@ object CocoonLog {
         val last = HashMap<Pair<String, String>, Long>()
         for ((pkg, list) in spans) {
             val ls = byPkg[pkg] ?: continue
-            for (s in list) {
-                // allow a minute of clock slack: the log line is written just before the emulator resumes
-                val l = ls.lastOrNull { it.at <= s.start + 60_000 } ?: continue
-                if (s.start - l.at > MAX_SESSION_MS) continue
-                val key = l.title to l.system
-                UsageTracker.addSpan(perGame.getOrPut(key) { HashMap() }, s.start, s.end)
-                last[key] = maxOf(last[key] ?: 0L, s.end)
+            for (whole in list) {
+                // a Swap (or new launch) while the emulator stays on screen splits the span: time after it is the new game's
+                val cuts = ls.map { it.at }.filter { it > whole.start + 60_000 && it < whole.end }
+                val bounds = listOf(whole.start) + cuts + whole.end
+                for (i in 0 until bounds.size - 1) {
+                    val s = UsageTracker.Span(bounds[i], bounds[i + 1])
+                    // allow a minute of clock slack: the log line is written just before the emulator resumes
+                    val l = ls.lastOrNull { it.at <= s.start + 60_000 } ?: continue
+                    if (s.start - l.at > MAX_SESSION_MS) continue
+                    val key = l.title to l.system
+                    UsageTracker.addSpan(perGame.getOrPut(key) { HashMap() }, s.start, s.end)
+                    last[key] = maxOf(last[key] ?: 0L, s.end)
+                }
             }
         }
         return perGame.mapNotNull { (key, byDay) ->
